@@ -282,6 +282,7 @@ enum class UIMessage {
 	REQUEST_GAME_PAUSE,
 	REQUEST_GAME_RESET,
 	REQUEST_GAME_STOP,
+	REQUEST_EXIT_APP,  // Exits the app, after saving state if "Save state on exit" applies. System_ExitApp() exits right away.
 	GAME_SELECTED,
 	SHOW_CONTROL_MAPPING,
 	SHOW_CHAT_SCREEN,

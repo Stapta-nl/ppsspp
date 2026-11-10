@@ -851,7 +851,7 @@ void GamePauseScreen::OnExit(UI::EventParams &e) {
 		screenManager()->push(new UI::MessagePopupScreen(title, confirmExitMessage, mm->T("Exit"), di->T("Cancel"), [this](bool result) {
 			if (result) {
 				if (g_Config.bPauseMenuExitsEmulator) {
-					System_ExitApp();
+					System_PostUIMessage(UIMessage::REQUEST_EXIT_APP);
 				} else {
 					finishNextFrameResult_ = DR_OK;  // exit game
 					finishNextFrame_ = true;
@@ -860,7 +860,7 @@ void GamePauseScreen::OnExit(UI::EventParams &e) {
 		}));
 	} else {
 		if (g_Config.bPauseMenuExitsEmulator) {
-			System_ExitApp();
+			System_PostUIMessage(UIMessage::REQUEST_EXIT_APP);
 		} else {
 			TriggerFinish(DR_OK);
 		}

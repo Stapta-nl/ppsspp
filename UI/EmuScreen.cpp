@@ -522,7 +522,7 @@ void EmuScreen::dialogFinished(const Screen *dialog, DialogResult result) {
 	// DR_CANCEL/DR_BACK means clicked on "continue", DR_OK means clicked on "back to menu",
 	// DR_YES means a message sent to PauseMenu by System_PostUIMessage.
 	if ((result == DR_OK || quit_) && !bootPending_) {
-		screenManager()->switchScreen(new MainScreen());
+		EndGame(EndGameAction::ToMenu);
 		quit_ = false;
 	} else {
 		RecreateViews();
@@ -563,6 +563,11 @@ void EmuScreen::sendMessage(UIMessage message, const char *value) {
 	// This happens on the main thread.
 	if (message == UIMessage::REQUEST_GAME_PAUSE && screenManager()->topScreen() == this) {
 		screenManager()->push(new GamePauseScreen(gamePath_, bootPending_));
+	} else if (message == UIMessage::REQUEST_EXIT_APP) {
+		// When no game is running, HandleGlobalMessage() exits.
+		if (PSP_IsInited()) {
+			EndGame(EndGameAction::ExitApp);
+		}
 	} else if (message == UIMessage::REQUEST_GAME_STOP) {
 		// We will push MainScreen in update().
 		if (bootPending_) {
@@ -997,11 +1002,11 @@ void EmuScreen::ProcessVKey(VirtKey virtKey) {
 				confirmExitMessage += di->T("Are you sure you want to exit?");
 				screenManager()->push(new UI::MessagePopupScreen(mm->T("Exit"), confirmExitMessage, di->T("Yes"), di->T("No"), [=](bool result) {
 					if (result) {
-						System_ExitApp();
+						EndGame(EndGameAction::ExitApp);
 					}
 				}));
 			} else {
-				System_ExitApp();
+				EndGame(EndGameAction::ExitApp);
 			}
 		}
 		break;
@@ -1486,7 +1491,10 @@ void EmuScreen::update() {
 
 	if (pauseTrigger_) {
 		pauseTrigger_ = false;
-		screenManager()->push(new GamePauseScreen(gamePath_, bootPending_));
+		// Pausing would hold up a save on exit.
+		if (endGameStartTime_ < 0.0) {
+			screenManager()->push(new GamePauseScreen(gamePath_, bootPending_));
+		}
 	}
 
 	if (!PSP_IsInited())
@@ -1539,6 +1547,82 @@ bool EmuScreen::checkPowerDown() {
 		return true;
 	}
 	return false;
+}
+
+// All the ways of leaving a running game from the UI end up here. With "Save state on exit", this
+// saves state first, and the action happens once that's written (or after a few seconds, if it isn't).
+void EmuScreen::EndGame(EndGameAction action) {
+	if (endGameStartTime_ >= 0.0) {
+		// Already saving. Exiting the app wins over going to the menu.
+		if (action == EndGameAction::ExitApp) {
+			endGameAction_ = action;
+		}
+		return;
+	}
+	if (!StartSaveStateOnExit()) {
+		DoEndGameAction(action);
+		return;
+	}
+	endGameAction_ = action;
+	endGameStartTime_ = time_now_d();
+	// The state is taken when emulation runs next, which the pause menu (or anything else on top) would stop.
+	screenManager()->cancelScreensAbove(this);
+}
+
+bool EmuScreen::StartSaveStateOnExit() {
+	if (!g_Config.bSaveStateOnExit || bootPending_ || !PSP_IsInited() || coreState == CORE_RUNTIME_ERROR || coreState == CORE_POWERDOWN) {
+		return false;
+	}
+	// SaveState would refuse these without calling back.
+	if (!NetworkAllowSaveState() || (Achievements::HardcoreModeActive() && !g_Config.bAchievementsSaveStateInHardcoreMode)) {
+		return false;
+	}
+
+	// Like auto load: its slot if it has one, otherwise the current slot (which "Newest" then loads).
+	int slot = SaveState::GetCurrentSlot();
+	if (g_Config.iAutoLoadSaveState > (int)AutoLoadSaveState::NEWEST) {
+		slot = g_Config.iAutoLoadSaveState - 3;
+	}
+
+	INFO_LOG(Log::SaveState, "Saving state in slot %d before leaving the game", slot + 1);
+	auto done = std::make_shared<bool>(false);
+	exitSaveDone_ = done;
+	SaveState::SaveSlot(SaveState::GetGamePrefix(g_paramSFO), slot, [done](SaveState::Status status, std::string_view message) {
+		if (status == SaveState::Status::FAILURE) {
+			ERROR_LOG(Log::SaveState, "Save state on exit failed: %.*s", STR_VIEW(message));
+		}
+		AfterSaveStateAction(status, message);
+		*done = true;
+	});
+	return true;
+}
+
+void EmuScreen::UpdateEndGame() {
+	if (endGameStartTime_ < 0.0) {
+		return;
+	}
+	// The thumbnail is taken from the frame after the state, and written in the background.
+	const bool saving = !*exitSaveDone_ || IsSaveStateScreenshotPending();
+	if (saving && time_now_d() - endGameStartTime_ < 3.0) {
+		return;
+	}
+	if (saving) {
+		WARN_LOG(Log::SaveState, "Leaving the game before the save state on exit was done");
+	}
+	endGameStartTime_ = -1.0;
+	exitSaveDone_.reset();
+	DoEndGameAction(endGameAction_);
+}
+
+void EmuScreen::DoEndGameAction(EndGameAction action) {
+	switch (action) {
+	case EndGameAction::ToMenu:
+		screenManager()->switchScreen(new MainScreen());
+		break;
+	case EndGameAction::ExitApp:
+		System_ExitApp();
+		break;
+	}
 }
 
 ScreenRenderRole EmuScreen::renderRole(bool isTop) const {
@@ -1612,6 +1696,8 @@ bool EmuScreen::ShouldRunEmulation(ScreenRenderMode mode) const {
 }
 
 ScreenRenderFlags EmuScreen::PreRender(ScreenRenderMode mode) {
+	UpdateEndGame();
+
 	// If a boot is in progress, update it.
 	ProcessGameBoot(gamePath_);
 

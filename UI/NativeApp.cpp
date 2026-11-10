@@ -1165,6 +1165,12 @@ bool HandleGlobalMessage(UIMessage message, const std::string &value) {
 	if (message == UIMessage::RESTART_GRAPHICS) {
 		g_restartGraphics = 1;
 		return true;
+	} else if (message == UIMessage::REQUEST_EXIT_APP) {
+		// While a game runs, EmuScreen handles this (it may save state first).
+		if (!PSP_IsInited()) {
+			System_ExitApp();
+		}
+		return true;
 	} else if (message == UIMessage::SAVESTATE_DISPLAY_SLOT) {
 		auto sy = GetI18NCategory(I18NCat::SYSTEM);
 		std::string msg = StringFromFormat("%s: %d", sy->T_cstr("Savestate Slot"), SaveState::GetCurrentSlot() + 1);
@@ -1301,7 +1307,7 @@ bool NativeKey(const KeyInput &key) {
 		pspKeys.clear();
 		if (KeyMap::InputMappingToPspButton(InputMapping(key.deviceId, key.keyCode), &pspKeys)) {
 			if (std::find(pspKeys.begin(), pspKeys.end(), VIRTKEY_PAUSE) != pspKeys.end()) {
-				System_ExitApp();
+				System_PostUIMessage(UIMessage::REQUEST_EXIT_APP);
 				return true;
 			}
 		}

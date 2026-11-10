@@ -93,6 +93,9 @@ GlobalUIState GetUIState();
 
 static bool g_QuitRequested = false;
 static bool g_RestartRequested = false;
+// With "Save state on exit", a quit event (SIGTERM, closing the window) during a game lets the UI save
+// state before it exits. If that takes too long, quit anyway at this time. -1 if not waiting.
+static double g_quitDeadline = -1.0;
 
 static int g_DesktopWidth = 0;
 static int g_DesktopHeight = 0;
@@ -929,6 +932,13 @@ void UpdateCursor() {
 	SDL_SetCursor(g_builtinCursors[(int)curCursor]);
 }
 
+static void CheckQuitDeadline() {
+	if (g_quitDeadline >= 0.0 && time_now_d() >= g_quitDeadline) {
+		WARN_LOG(Log::System, "Quitting without waiting any longer for the save state on exit");
+		g_QuitRequested = true;
+	}
+}
+
 static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputStateTracker *inputTracker) {
 	// We have to juggle around 3 kinds of "DPI spaces" if a logical DPI is
 	// provided (through --dpi, it is equal to system DPI if unspecified):
@@ -940,7 +950,16 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
 
 	switch (event.type) {
 	case SDL_QUIT:
-		g_QuitRequested = 1;
+		if (g_quitDeadline >= 0.0) {
+			// Already waiting for the save, which another SIGTERM shouldn't cut short.
+			break;
+		}
+		if (g_Config.bSaveStateOnExit && PSP_IsInited()) {
+			g_quitDeadline = time_now_d() + 5.0;
+			System_PostUIMessage(UIMessage::REQUEST_EXIT_APP);
+		} else {
+			g_QuitRequested = 1;
+		}
 		break;
 
 #if !defined(MOBILE_DEVICE)
@@ -1805,6 +1824,7 @@ int main(int argc, char *argv[]) {
 				} while (SDL_PollEvent(&event));
 			}
 
+			CheckQuitDeadline();
 			if (g_QuitRequested || g_RestartRequested)
 				break;
 
@@ -1827,6 +1847,7 @@ int main(int argc, char *argv[]) {
 				ProcessSDLEvent(window, event, &inputTracker);
 			}
 		}
+		CheckQuitDeadline();
 		if (g_QuitRequested || g_RestartRequested)
 			break;
 		if (emuThreadState == (int)EmuThreadState::DISABLED) {
