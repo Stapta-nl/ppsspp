@@ -57,6 +57,13 @@ void ScheduleScreenshot(const Path &filename, ScreenshotFormat fmt, ScreenshotTy
 bool ScreenshotNotifyPostGameRender(Draw::DrawContext *draw);
 bool ScreenshotNotifyEndOfFrame(Draw::DrawContext *draw);
 
+// For when the game shuts down: drops a screenshot of it that was scheduled but not taken yet,
+// without calling its callback.
+void CancelPendingGameScreenshot();
+// Waits, for a few seconds at most, for screenshots that were taken to be written. Returns false
+// if some still weren't.
+bool WaitForScreenshotWrites();
+
 bool Save888RGBScreenshot(const Path &filename, ScreenshotFormat fmt, const u8 *bufferRGB888, int w, int h);
 bool Save8888RGBAScreenshot(const Path &filename, const u8 *bufferRGBA8888, int w, int h);
 // Overallocate bufferPNG for better encoding speed.

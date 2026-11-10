@@ -77,6 +77,7 @@
 #include "Core/PSPLoaders.h"
 #include "Core/ELF/ParamSFO.h"
 #include "Core/SaveState.h"
+#include "Core/Screenshot.h"
 #include "Core/Util/RecentFiles.h"
 #include "Common/ExceptionHandlerSetup.h"
 #include "GPU/GPUCommon.h"
@@ -1050,6 +1051,10 @@ void PSP_Shutdown(bool success) {
 
 	CPU_Shutdown(success);
 	GPU_Shutdown();
+	// CPU_Shutdown() waited for savestates to be written. A thumbnail of the game can't be taken
+	// anymore, but one that was gets written too.
+	CancelPendingGameScreenshot();
+	WaitForScreenshotWrites();
 	g_paramSFO.Clear();
 	g_paramSFORaw.Clear();
 	System_SetWindowTitle("");

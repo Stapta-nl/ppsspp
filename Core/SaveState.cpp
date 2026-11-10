@@ -835,6 +835,9 @@ int g_screenshotFailures;
 				Path shotUndo = GenerateSaveSlotPath(gamePrefix, slot, UNDO_SCREENSHOT_EXTENSION);
 				DeleteIfExists(shotUndo);
 				RenameIfExists(shot, shotUndo);
+			} else {
+				// So the old state's thumbnail isn't left with the new state if no new one is taken.
+				DeleteIfExists(shot);
 			}
 			ScheduleSaveScreenshot(shot);
 			// Written to a temporary file, then moved into place with the old state kept for undo.

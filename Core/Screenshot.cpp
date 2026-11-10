@@ -18,6 +18,10 @@
 #include "ppsspp_config.h"
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
 
 #include <png.h>
 #include "ext/jpge/jpge.h"
@@ -52,6 +56,24 @@ struct PendingScreenshot {
 };
 
 PendingScreenshot g_pendingScreenshot;
+
+static std::mutex g_screenshotWritesMutex;
+static std::condition_variable g_screenshotWritesCond;
+static int g_screenshotWrites = 0;
+
+// Counts a screenshot write for as long as its task exists, so one that Teardown() drops unrun stops counting too.
+class ScreenshotWriteRef {
+public:
+	ScreenshotWriteRef() {
+		std::lock_guard<std::mutex> guard(g_screenshotWritesMutex);
+		g_screenshotWrites++;
+	}
+	~ScreenshotWriteRef() {
+		std::lock_guard<std::mutex> guard(g_screenshotWritesMutex);
+		g_screenshotWrites--;
+		g_screenshotWritesCond.notify_all();
+	}
+};
 
 // The callback may schedule a retry, so the pending screenshot has to be out of the way before it runs.
 static void FailPendingScreenshot() {
@@ -325,6 +347,26 @@ void ScheduleScreenshot(const Path &filename, ScreenshotFormat fmt, ScreenshotTy
 	g_pendingScreenshot.maxRes = maxRes;
 }
 
+void CancelPendingGameScreenshot() {
+	if (g_pendingScreenshot.path.empty() || g_pendingScreenshot.type == ScreenshotType::Output) {
+		return;
+	}
+	// Its callback could retry, or refer to a screen that's going away.
+	INFO_LOG(Log::System, "Dropping a screenshot that wasn't taken before shutdown: %s", g_pendingScreenshot.path.c_str());
+	g_pendingScreenshot = {};
+}
+
+bool WaitForScreenshotWrites() {
+	// A stuck write (failing storage) shouldn't hang exit.
+	constexpr auto timeout = std::chrono::seconds(3);
+	std::unique_lock<std::mutex> lock(g_screenshotWritesMutex);
+	if (!g_screenshotWritesCond.wait_for(lock, timeout, [] { return g_screenshotWrites == 0; })) {
+		WARN_LOG(Log::System, "Gave up waiting for %d screenshots to be written", g_screenshotWrites);
+		return false;
+	}
+	return true;
+}
+
 bool ScreenshotNotifyEndOfFrame(Draw::DrawContext *draw) {
 	if (g_pendingScreenshot.path.empty() || g_pendingScreenshot.type != ScreenshotType::Output) {
 		return false;
@@ -397,7 +439,7 @@ bool ScreenshotNotifyPostGameRender(Draw::DrawContext *draw) {
 
 static void SaveScreenshotAsync(GPUDebugBuffer &&buf, int w, int h, int maxRes) {
 	g_threadManager.EnqueueTask(new IndependentTask(TaskType::IO_BLOCKING, TaskPriority::LOW,
-		[filename = std::move(g_pendingScreenshot.path), buf = std::move(buf), callback = std::move(g_pendingScreenshot.callback), fmt = g_pendingScreenshot.format, w, h, maxRes]() {
+		[filename = std::move(g_pendingScreenshot.path), buf = std::move(buf), callback = std::move(g_pendingScreenshot.callback), fmt = g_pendingScreenshot.format, w, h, maxRes, writeRef = std::make_unique<ScreenshotWriteRef>()]() {
 		u8 *flipbuffer = nullptr;
 		u32 width = w, height = h;
 		const u8 *buffer = ConvertBufferToScreenshot(buf, false, flipbuffer, width, height);

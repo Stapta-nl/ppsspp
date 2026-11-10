@@ -106,6 +106,9 @@ need the emu thread, so it can't deadlock.
   an EmuScreen that's going away, and drop whatever is still queued, as before. A save still queued
   at that point (asked for in the pause menu, which doesn't run `Process()`, then quitting) is lost
   like it always was: by then most of the kernel has shut down, too late to take a snapshot.
+  `PSP_Shutdown()` then waits (a few seconds at most) for a thumbnail screenshot that was taken
+  to be written, and drops one that wasn't taken yet, since the game is gone. So quitting right
+  after a save doesn't leave a half-written `.jpg`, or one from the next game.
 - Loads at boot (auto-load, `--state`, opening a `.ppst`) and the debugger's `game.state.*` with
   `wait` already work through callbacks, and need no special handling. The game already ran at least
   a frame before a boot-time load applied.
