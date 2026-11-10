@@ -68,6 +68,7 @@
 #include "Core/PSPLoaders.h"
 #include "Core/ELF/ParamSFO.h"
 #include "Core/SaveState.h"
+#include "Core/Screenshot.h"
 #include "Core/Util/RecentFiles.h"
 #include "Common/StringUtils.h"
 #include "Common/ExceptionHandlerSetup.h"
@@ -756,6 +757,7 @@ void PSP_Shutdown(bool success) {
 
 	CPU_Shutdown(success);
 	GPU_Shutdown();
+	CancelPendingSaveStateScreenshot();
 	g_paramSFO.Clear();
 	g_paramSFORaw.Clear();
 	System_SetWindowTitle("");

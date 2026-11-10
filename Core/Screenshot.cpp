@@ -18,6 +18,8 @@
 #include "ppsspp_config.h"
 
 #include <algorithm>
+#include <atomic>
+#include <mutex>
 
 #include <png.h>
 #include "ext/jpge/jpge.h"
@@ -49,9 +51,26 @@ struct PendingScreenshot {
 	Path path;
 	std::function<void(ScreenshotResult result)> callback;
 	int maxRes;
+	bool saveStateThumbnail;
 };
 
-PendingScreenshot g_pendingScreenshot;
+// Scheduled from whichever thread asks (the Windows menu, for one), taken on the render thread.
+static std::mutex g_pendingScreenshotMutex;
+static PendingScreenshot g_pendingScreenshot;
+// Savestate thumbnails that were taken and are still being written.
+static std::atomic<int> g_saveStateScreenshotWrites;
+
+// Takes the pending screenshot, if there's one of the kind asked for, so it's handled without the lock.
+// That also gets it out of the way of a retry its callback may schedule.
+static bool TakePendingScreenshot(bool output, PendingScreenshot *pending) {
+	std::lock_guard<std::mutex> guard(g_pendingScreenshotMutex);
+	if (g_pendingScreenshot.path.empty() || (g_pendingScreenshot.type == ScreenshotType::Output) != output) {
+		return false;
+	}
+	*pending = std::move(g_pendingScreenshot);
+	g_pendingScreenshot = {};
+	return true;
+}
 
 class JPEGFileStream : public jpge::output_stream {
 public:
@@ -324,19 +343,46 @@ static GPUDebugBuffer ApplyRotation(const GPUDebugBuffer &buf, DisplayRotation r
 	return rotated;
 }
 
-static void SaveScreenshotAsync(GPUDebugBuffer &&buf, int w, int h, int maxRes);
+static void SaveScreenshotAsync(PendingScreenshot &&pending, GPUDebugBuffer &&buf, int w, int h);
 
-void ScheduleScreenshot(const Path &filename, ScreenshotFormat fmt, ScreenshotType type, int maxRes, std::function<void(ScreenshotResult)> &&callback) {
+static void SetPendingScreenshot(const Path &filename, ScreenshotFormat fmt, ScreenshotType type, int maxRes, bool saveStateThumbnail, std::function<void(ScreenshotResult)> &&callback) {
+	std::lock_guard<std::mutex> guard(g_pendingScreenshotMutex);
 	g_pendingScreenshot = {};
 	g_pendingScreenshot.path = filename;
 	g_pendingScreenshot.format = fmt;
 	g_pendingScreenshot.type = type;
 	g_pendingScreenshot.callback = std::move(callback);
 	g_pendingScreenshot.maxRes = maxRes;
+	g_pendingScreenshot.saveStateThumbnail = saveStateThumbnail;
+}
+
+void ScheduleScreenshot(const Path &filename, ScreenshotFormat fmt, ScreenshotType type, int maxRes, std::function<void(ScreenshotResult)> &&callback) {
+	SetPendingScreenshot(filename, fmt, type, maxRes, false, std::move(callback));
+}
+
+void ScheduleSaveStateScreenshot(const Path &filename, int maxRes, std::function<void(ScreenshotResult)> &&callback) {
+	SetPendingScreenshot(filename, ScreenshotFormat::JPG, ScreenshotType::Display, maxRes, true, std::move(callback));
+}
+
+bool IsSaveStateScreenshotPending() {
+	std::lock_guard<std::mutex> guard(g_pendingScreenshotMutex);
+	return (!g_pendingScreenshot.path.empty() && g_pendingScreenshot.saveStateThumbnail) || g_saveStateScreenshotWrites > 0;
+}
+
+void CancelPendingSaveStateScreenshot() {
+	std::lock_guard<std::mutex> guard(g_pendingScreenshotMutex);
+	if (g_pendingScreenshot.path.empty() || !g_pendingScreenshot.saveStateThumbnail) {
+		return;
+	}
+	// Otherwise it'd be taken from whatever renders next, even another game. Its callback would only
+	// schedule a retry.
+	WARN_LOG(Log::SaveState, "The game shut down before the savestate thumbnail was taken: %s", g_pendingScreenshot.path.c_str());
+	g_pendingScreenshot = {};
 }
 
 bool ScreenshotNotifyEndOfFrame(Draw::DrawContext *draw) {
-	if (g_pendingScreenshot.path.empty() || g_pendingScreenshot.type != ScreenshotType::Output) {
+	PendingScreenshot pending;
+	if (!TakePendingScreenshot(true, &pending)) {
 		return false;
 	}
 
@@ -346,46 +392,41 @@ bool ScreenshotNotifyEndOfFrame(Draw::DrawContext *draw) {
 	if (g_display.rotation != DisplayRotation::ROTATE_0) {
 		GPUDebugBuffer temp;
 		if (!::GetOutputFramebuffer(draw, temp)) {
-			g_pendingScreenshot.callback(ScreenshotResult::ScreenshotNotPossible);
-			g_pendingScreenshot = {};
+			pending.callback(ScreenshotResult::ScreenshotNotPossible);
 			return false;
 		}
 		_dbg_assert_msg_(temp.IsBackBuffer(), "temp isn't backbuffer??");
 		buf = ApplyRotation(temp, g_display.rotation);
 	} else {
 		if (!::GetOutputFramebuffer(draw, buf)) {
-			g_pendingScreenshot.callback(ScreenshotResult::ScreenshotNotPossible);
-			g_pendingScreenshot = {};
+			pending.callback(ScreenshotResult::ScreenshotNotPossible);
 			return false;
 		}
 	}
 	_dbg_assert_msg_(buf.IsBackBuffer(), "buf isn't backbuffer?? rotation: %d", (int)g_display.rotation);
 	const int w = buf.GetStride();
 	const int h = buf.GetHeight();
-	SaveScreenshotAsync(std::move(buf), w, h, g_pendingScreenshot.maxRes);
-	// Wipe the screenshot state.
-	g_pendingScreenshot = {};
+	SaveScreenshotAsync(std::move(pending), std::move(buf), w, h);
 	return true;
 }
 
 bool ScreenshotNotifyPostGameRender(Draw::DrawContext *draw) {
-	if (g_pendingScreenshot.path.empty() || g_pendingScreenshot.type == ScreenshotType::Output) {
+	PendingScreenshot pending;
+	if (!TakePendingScreenshot(false, &pending)) {
 		return false;
 	}
 
 	GPUDebugBuffer buf;
 	if (!gpuDebug) {
 		ERROR_LOG(Log::System, "Can't take screenshots when GPU not running");
-		g_pendingScreenshot.callback(ScreenshotResult::ScreenshotNotPossible);
-		g_pendingScreenshot = {};
+		pending.callback(ScreenshotResult::ScreenshotNotPossible);
 		return false;
 	}
 
-	const int maxRes = g_pendingScreenshot.maxRes;
+	const int maxRes = pending.maxRes;
 
-	if (!gpuDebug->GetCurrentFramebuffer(buf, g_pendingScreenshot.type == ScreenshotType::Render ? GPU_DBG_FRAMEBUF_RENDER : GPU_DBG_FRAMEBUF_DISPLAY, maxRes)) {
-		g_pendingScreenshot.callback(ScreenshotResult::ScreenshotNotPossible);
-		g_pendingScreenshot = {};
+	if (!gpuDebug->GetCurrentFramebuffer(buf, pending.type == ScreenshotType::Render ? GPU_DBG_FRAMEBUF_RENDER : GPU_DBG_FRAMEBUF_DISPLAY, maxRes)) {
+		pending.callback(ScreenshotResult::ScreenshotNotPossible);
 		return false;
 	}
 
@@ -399,15 +440,17 @@ bool ScreenshotNotifyPostGameRender(Draw::DrawContext *draw) {
 		h = maxRes > 0 ? 272 * maxRes : buf.GetHeight();
 	}
 
-	SaveScreenshotAsync(std::move(buf), w, h, g_pendingScreenshot.maxRes);
-	// Wipe the screenshot state.
-	g_pendingScreenshot = {};
+	SaveScreenshotAsync(std::move(pending), std::move(buf), w, h);
 	return true;
 }
 
-static void SaveScreenshotAsync(GPUDebugBuffer &&buf, int w, int h, int maxRes) {
+static void SaveScreenshotAsync(PendingScreenshot &&pending, GPUDebugBuffer &&buf, int w, int h) {
+	const bool saveStateThumbnail = pending.saveStateThumbnail;
+	if (saveStateThumbnail) {
+		g_saveStateScreenshotWrites++;
+	}
 	g_threadManager.EnqueueTask(new IndependentTask(TaskType::IO_BLOCKING, TaskPriority::LOW,
-		[filename = std::move(g_pendingScreenshot.path), buf = std::move(buf), callback = std::move(g_pendingScreenshot.callback), fmt = g_pendingScreenshot.format, w, h, maxRes]() {
+		[filename = std::move(pending.path), buf = std::move(buf), callback = std::move(pending.callback), fmt = pending.format, w, h, maxRes = pending.maxRes, saveStateThumbnail]() {
 		u8 *flipbuffer = nullptr;
 		u32 width = w, height = h;
 		const u8 *buffer = ConvertBufferToScreenshot(buf, false, flipbuffer, width, height);
@@ -440,6 +483,9 @@ static void SaveScreenshotAsync(GPUDebugBuffer &&buf, int w, int h, int maxRes) 
 				height /= 2;
 			}
 			result = Save888RGBScreenshot(filename, fmt, shrinkBuffer, width, height) ? ScreenshotResult::Success : ScreenshotResult::FailedToWriteFile;
+		}
+		if (saveStateThumbnail) {
+			g_saveStateScreenshotWrites--;
 		}
 
 		System_RunOnMainThread([result, callback = std::move(callback)]() {

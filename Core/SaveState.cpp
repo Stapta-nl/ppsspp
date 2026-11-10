@@ -384,7 +384,7 @@ int g_screenshotFailures;
 
 		// Savestate thumbnails don't need to be bigger.
 		constexpr int maxResMultiplier = 2;
-		ScheduleScreenshot(path, ScreenshotFormat::JPG, ScreenshotType::Display, maxResMultiplier, [path](ScreenshotResult result) {
+		ScheduleSaveStateScreenshot(path, maxResMultiplier, [path](ScreenshotResult result) {
 			switch (result) {
 			case ScreenshotResult::ScreenshotNotPossible:
 				// Try again soon, for a short while.

@@ -53,6 +53,12 @@ const u8 *ConvertBufferToScreenshot(const GPUDebugBuffer &buf, bool alpha, u8 *&
 // Can only be used while in game.
 // If the callback is passed in, the saving action happens on a background thread.
 void ScheduleScreenshot(const Path &filename, ScreenshotFormat fmt, ScreenshotType type, int maxRes, std::function<void(ScreenshotResult)> &&callback);
+// A savestate's thumbnail, of the game's display.
+void ScheduleSaveStateScreenshot(const Path &filename, int maxRes, std::function<void(ScreenshotResult)> &&callback);
+// Whether a savestate thumbnail is waiting for a frame to be taken from, or still being written.
+bool IsSaveStateScreenshotPending();
+// For when the game shuts down: drops a savestate thumbnail that wasn't taken yet.
+void CancelPendingSaveStateScreenshot();
 
 bool ScreenshotNotifyPostGameRender(Draw::DrawContext *draw);
 bool ScreenshotNotifyEndOfFrame(Draw::DrawContext *draw);
