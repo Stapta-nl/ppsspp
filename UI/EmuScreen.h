@@ -18,6 +18,7 @@
 #pragma once
 
 #include <list>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -98,6 +99,15 @@ private:
 	void AutoLoadSaveState();
 	bool checkPowerDown();
 
+	enum class EndGameAction {
+		ToMenu,
+		ExitApp,
+	};
+	void EndGame(EndGameAction action);
+	bool StartSaveStateOnExit();
+	void UpdateEndGame();
+	void DoEndGameAction(EndGameAction action);
+
 	void ProcessQueuedVKeys();
 	void ProcessVKey(VirtKey vkey);
 
@@ -160,6 +170,12 @@ private:
 	ImGuiContext *ctx_ = nullptr;
 
 	bool frameStep_ = false;
+
+	// While saving state on the way out of the game: when that started (-1 if not), what to do once
+	// it's done, and whether the state has been written.
+	double endGameStartTime_ = -1.0;
+	EndGameAction endGameAction_ = EndGameAction::ToMenu;
+	std::shared_ptr<bool> exitSaveDone_;
 #ifndef MOBILE_DEVICE
 	bool startDumping_ = false;
 #endif

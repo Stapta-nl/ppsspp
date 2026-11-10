@@ -349,6 +349,7 @@ public:
 	std::string sStateUndoLastSaveGame;
 	int iStateUndoLastSaveSlot;
 	int iAutoLoadSaveState; // 0 = off, 1 = oldest (deprecated), 2 = newest, 3+ = slot number + 3 (up to 5)
+	bool bSaveStateOnExit;  // to the auto load slot if one is set, otherwise the current slot
 	int iSaveStateSlotCount;
 	bool bEnableCheats;
 	bool bReloadCheats;

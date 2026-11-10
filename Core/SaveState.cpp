@@ -197,17 +197,28 @@ int g_screenshotFailures;
 		pspFileSystem.DoState(p);
 	}
 
-	void Enqueue(const SaveState::Operation &op) {
+	static bool IsOperationAllowed(OperationType type) {
 		if (!NetworkAllowSaveState()) {
-			return;
+			return false;
 		}
 		if (Achievements::HardcoreModeActive()) {
-			if (g_Config.bAchievementsSaveStateInHardcoreMode && ((op.type == SaveState::OperationType::Save))) {
+			if (g_Config.bAchievementsSaveStateInHardcoreMode && type == OperationType::Save) {
 				// We allow saving in hardcore mode if this setting is on.
 			} else {
 				// Operation not allowed
-				return;
+				return false;
 			}
+		}
+		return true;
+	}
+
+	bool CanSave() {
+		return IsOperationAllowed(OperationType::Save);
+	}
+
+	void Enqueue(const SaveState::Operation &op) {
+		if (!IsOperationAllowed(op.type)) {
+			return;
 		}
 
 		std::lock_guard<std::mutex> guard(mutex);
@@ -384,7 +395,7 @@ int g_screenshotFailures;
 
 		// Savestate thumbnails don't need to be bigger.
 		constexpr int maxResMultiplier = 2;
-		ScheduleScreenshot(path, ScreenshotFormat::JPG, ScreenshotType::Display, maxResMultiplier, [path](ScreenshotResult result) {
+		ScheduleSaveStateScreenshot(path, maxResMultiplier, [path](ScreenshotResult result) {
 			switch (result) {
 			case ScreenshotResult::ScreenshotNotPossible:
 				// Try again soon, for a short while.

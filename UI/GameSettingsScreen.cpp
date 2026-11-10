@@ -1409,6 +1409,7 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 	if (g_Config.iAutoLoadSaveState != 1) {
 		autoloadSaveState->HideChoice(1);  // Hide "Oldest Save" if not using that mode. It doesn't make sense.
 	}
+	systemSettings->Add(new CheckBox(&g_Config.bSaveStateOnExit, sy->T("Save state on exit")));
 
 	PopupSliderChoice *rewindInterval = systemSettings->Add(new PopupSliderChoice(&g_Config.iRewindSnapshotInterval, 0, 60, 0, sy->T("Rewind Snapshot Interval"), screenManager(), di->T("seconds, 0:off")));
 	rewindInterval->SetFormat(di->T("%d seconds"));
