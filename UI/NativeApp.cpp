@@ -2064,9 +2064,6 @@ void NativeShutdown() {
 
 	ShaderTranslationShutdown();
 
-	// Teardown() would drop a screenshot write that's still waiting for a thread.
-	WaitForScreenshotWrites();
-
 	INFO_LOG(Log::System, "Stopping the thread pool");
 	// Avoid shutting this down when restarting core.
 	g_logManager.Shutdown();

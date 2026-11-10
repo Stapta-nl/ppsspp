@@ -103,6 +103,7 @@ private:
 	void AutoLoadSaveState();
 	bool checkPowerDown();
 	void leaveGame();
+	void ExitWhenSaved();
 
 	void ProcessQueuedVKeys();
 	void ProcessVKey(VirtKey vkey, bool down);
@@ -162,6 +163,8 @@ private:
 	std::vector<std::pair<VirtKey, bool>> queuedVirtKeys_;
 
 	bool frameStep_ = false;
+	// When the exit key was pressed, while a savestate still needed frames to be taken. -1 if not.
+	double exitRequestedTime_ = -1.0;
 #ifndef MOBILE_DEVICE
 	bool startDumping_ = false;
 #endif

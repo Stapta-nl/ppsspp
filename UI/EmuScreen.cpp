@@ -744,6 +744,7 @@ void EmuScreen::ProcessQueuedVKeys() {
 	for (auto iter : dequeued) {
 		ProcessVKey(iter.first, iter.second);
 	}
+	ExitWhenSaved();
 }
 
 // Synchronized processing of virtkeys.
@@ -977,7 +978,8 @@ void EmuScreen::ProcessVKey(VirtKey virtKey, bool down) {
 						}
 					}));
 				} else {
-					System_ExitApp();
+					// A save state on the same key still has to be taken.
+					exitRequestedTime_ = time_now_d();
 				}
 			}
 		}
@@ -1578,6 +1580,24 @@ bool EmuScreen::checkPowerDown() {
 	return false;
 }
 
+// With save state and exit on one key, to save on the way out, the save still needs a frame to take
+// its snapshot and thumbnail from. So keep running until it's done, for a few seconds at most.
+void EmuScreen::ExitWhenSaved() {
+	if (exitRequestedTime_ < 0.0) {
+		return;
+	}
+	// Busy until the state is written, which shutting down would wait for anyway.
+	const bool saving = SaveState::IsBusy() || IsSaveStateScreenshotPending();
+	if (saving && time_now_d() - exitRequestedTime_ < 3.0) {
+		return;
+	}
+	if (saving) {
+		WARN_LOG(Log::SaveState, "Exiting before the savestate was done");
+	}
+	exitRequestedTime_ = -1.0;
+	System_ExitApp();
+}
+
 void EmuScreen::leaveGame() {
 	// Switch screens even when exiting, so the game gets shut down the usual way.
 	screenManager()->switchScreen(new MainScreen());
@@ -1678,6 +1698,8 @@ static bool GPUIsBuffered() {
 }
 
 ScreenRenderFlags EmuScreen::PreRender(ScreenRenderMode mode) {
+	ExitWhenSaved();
+
 	// If a boot is in progress, update it.
 	ProcessGameBoot(gamePath_);
 

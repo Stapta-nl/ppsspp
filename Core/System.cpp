@@ -1051,10 +1051,8 @@ void PSP_Shutdown(bool success) {
 
 	CPU_Shutdown(success);
 	GPU_Shutdown();
-	// CPU_Shutdown() waited for savestates to be written. A thumbnail of the game can't be taken
-	// anymore, but one that was gets written too.
-	CancelPendingGameScreenshot();
-	WaitForScreenshotWrites();
+	// CPU_Shutdown() waited for the savestate worker, which writes the thumbnails that were taken.
+	CancelPendingSaveStateScreenshot();
 	g_paramSFO.Clear();
 	g_paramSFORaw.Clear();
 	System_SetWindowTitle("");

@@ -743,7 +743,7 @@ int g_screenshotFailures;
 
 		// Savestate thumbnails don't need to be bigger.
 		constexpr int maxResMultiplier = 2;
-		ScheduleScreenshot(path, ScreenshotFormat::JPG, ScreenshotType::Display, maxResMultiplier, [path](ScreenshotResult result) {
+		ScheduleSaveStateScreenshot(path, maxResMultiplier, [path](ScreenshotResult result) {
 			switch (result) {
 			case ScreenshotResult::ScreenshotNotPossible:
 				// Try again soon, for a short while.
@@ -835,9 +835,6 @@ int g_screenshotFailures;
 				Path shotUndo = GenerateSaveSlotPath(gamePrefix, slot, UNDO_SCREENSHOT_EXTENSION);
 				DeleteIfExists(shotUndo);
 				RenameIfExists(shot, shotUndo);
-			} else {
-				// So the old state's thumbnail isn't left with the new state if no new one is taken.
-				DeleteIfExists(shot);
 			}
 			ScheduleSaveScreenshot(shot);
 			// Written to a temporary file, then moved into place with the old state kept for undo.

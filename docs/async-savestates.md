@@ -48,7 +48,8 @@ doesn't (worker).
    is on disk**, not at snapshot time, so a failed write is reported honestly. A failed write leaves
    the previous file in place (it only ever wrote the `.tmp`).
 
-The thumbnail screenshot is already asynchronous and doesn't change.
+The thumbnail screenshot is still taken from the next frame the game renders. It's then written by a
+worker job too, queued behind the state's own write, so shutting down waits for it like for the state.
 
 **A save to a path that already has a save queued, and not yet snapshotted, is a duplicate
 keypress.** It isn't queued again. Its callback is attached to the queued save and called with that
@@ -90,7 +91,7 @@ Operations still take effect in the order they were asked for:
 - **UI-thread file operations on slots wait for the worker** (`WaitForWorker()`, for all jobs, since
   it's rare and short): `UndoSaveSlot` and `DeleteSlot`. `UndoLoad` is a load, so it's queued behind
   the load undo write like anything else. `LoadSlot`'s existence check counts a slot with a save
-  pending as existing. The thumbnail screenshot isn't the worker's, so its rotation doesn't wait.
+  pending as existing. `SaveSlot` moves the old thumbnail aside without waiting.
 
 ## What stays synchronous
 
@@ -106,9 +107,10 @@ need the emu thread, so it can't deadlock.
   an EmuScreen that's going away, and drop whatever is still queued, as before. A save still queued
   at that point (asked for in the pause menu, which doesn't run `Process()`, then quitting) is lost
   like it always was: by then most of the kernel has shut down, too late to take a snapshot.
-  `PSP_Shutdown()` then waits (a few seconds at most) for a thumbnail screenshot that was taken
-  to be written, and drops one that wasn't taken yet, since the game is gone. So quitting right
-  after a save doesn't leave a half-written `.jpg`, or one from the next game.
+  So is a thumbnail that wasn't taken yet: otherwise the next frame rendered, maybe of another
+  game, would be. That's why the exit key, with save state bound to the same key to save on the way
+  out, doesn't exit right away: `EmuScreen` keeps running until the save is done (a few seconds at
+  most), since the snapshot and thumbnail need a frame.
 - Loads at boot (auto-load, `--state`, opening a `.ppst`) and the debugger's `game.state.*` with
   `wait` already work through callbacks, and need no special handling. The game already ran at least
   a frame before a boot-time load applied.
