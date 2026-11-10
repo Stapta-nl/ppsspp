@@ -82,6 +82,10 @@ namespace SaveState {
 	// Warning: callback will be called on a different thread.
 	void Load(const Path &filename, int slot, Callback callback = Callback());
 
+	// Whether saving state is allowed right now (not during netplay, nor in hardcore mode unless that's allowed.)
+	// Save() and SaveSlot() silently do nothing when it isn't.
+	bool CanSave();
+
 	// Save the current state to the specified file (async.)
 	// Warning: callback will be called on a different thread.
 	void Save(const Path &filename, int slot, Callback callback = Callback());

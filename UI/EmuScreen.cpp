@@ -452,6 +452,14 @@ void EmuScreen::bootComplete() {
 EmuScreen::~EmuScreen() {
 	g_controlMapper.RemoveListener(this);
 
+	if (endGameStartTime_ >= 0.0 && endGameAction_ == EndGameAction::ExitApp) {
+		// We were asked to exit the app, but the game was left (or stopped by itself) while saving state.
+		// HandleGlobalMessage() left the exit to us, so do it now.
+		WARN_LOG(Log::System, "Left the game while saving state on exit, exiting now");
+		endGameStartTime_ = -1.0;
+		System_ExitApp();
+	}
+
 	if (imguiInited_) {
 		ImGui_ImplThin3d_Shutdown();
 		ImGui::DestroyContext(ctx_);
@@ -1573,21 +1581,41 @@ bool EmuScreen::StartSaveStateOnExit() {
 	if (!g_Config.bSaveStateOnExit || bootPending_ || !PSP_IsInited() || coreState == CORE_RUNTIME_ERROR || coreState == CORE_POWERDOWN) {
 		return false;
 	}
-	// SaveState would refuse these without calling back.
-	if (!NetworkAllowSaveState() || (Achievements::HardcoreModeActive() && !g_Config.bAchievementsSaveStateInHardcoreMode)) {
+	// Don't freeze a crashed game, or one stopped in the debugger, into the slot that's loaded next time.
+	// Pausing without the menu (or frame advance) is fine.
+	const bool userPause = Core_BreakReason() == BreakReason::UIPause || Core_BreakReason() == BreakReason::FrameAdvance;
+	if (Core_GetExceptionInfo().type != MIPSExceptionType::NONE || GetUIState() == UISTATE_EXCEPTION ||
+		(coreState == CORE_STEPPING_CPU && !userPause) || coreState == CORE_STEPPING_GE) {
+		WARN_LOG(Log::SaveState, "Not saving state on exit: the game is stopped on an exception or in the debugger");
+		return false;
+	}
+	if (autoLoadFailed_) {
+		// The game started over instead, so the state we'd save would replace the one the user had.
+		WARN_LOG(Log::SaveState, "Not saving state on exit, since loading the auto load state failed");
+		return false;
+	}
+	// SaveState would refuse this without calling back.
+	if (!SaveState::CanSave()) {
 		return false;
 	}
 
+	const std::string gamePrefix = SaveState::GetGamePrefix(g_paramSFO);
 	// Like auto load: its slot if it has one, otherwise the current slot (which "Newest" then loads).
 	int slot = SaveState::GetCurrentSlot();
 	if (g_Config.iAutoLoadSaveState > (int)AutoLoadSaveState::NEWEST) {
 		slot = g_Config.iAutoLoadSaveState - 3;
+	} else if (g_Config.iAutoLoadSaveState == (int)AutoLoadSaveState::OLDEST) {
+		// The deprecated "Oldest": replace the oldest state rather than the current slot's.
+		const int oldest = SaveState::GetOldestSlot(gamePrefix);
+		if (oldest >= 0) {
+			slot = oldest;
+		}
 	}
 
 	INFO_LOG(Log::SaveState, "Saving state in slot %d before leaving the game", slot + 1);
 	auto done = std::make_shared<bool>(false);
 	exitSaveDone_ = done;
-	SaveState::SaveSlot(SaveState::GetGamePrefix(g_paramSFO), slot, [done](SaveState::Status status, std::string_view message) {
+	SaveState::SaveSlot(gamePrefix, slot, [done](SaveState::Status status, std::string_view message) {
 		if (status == SaveState::Status::FAILURE) {
 			ERROR_LOG(Log::SaveState, "Save state on exit failed: %.*s", STR_VIEW(message));
 		}
@@ -1604,6 +1632,10 @@ void EmuScreen::UpdateEndGame() {
 	// The thumbnail is taken from the frame after the state, and written in the background.
 	const bool saving = !*exitSaveDone_ || IsSaveStateScreenshotPending();
 	if (saving && time_now_d() - endGameStartTime_ < 3.0) {
+		// Anything opened on top meanwhile (a menu, a hotkey's screen) would stop emulation, and with it the save.
+		if (screenManager()->topScreen() != this) {
+			screenManager()->cancelScreensAbove(this);
+		}
 		return;
 	}
 	if (saving) {

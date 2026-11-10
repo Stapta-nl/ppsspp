@@ -956,6 +956,8 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
 		}
 		if (g_Config.bSaveStateOnExit && PSP_IsInited()) {
 			g_quitDeadline = time_now_d() + 5.0;
+			// "Pause when minimized" would stop frames, so the save (and the exit message itself) would never run.
+			Native_NotifyWindowHidden(false);
 			System_PostUIMessage(UIMessage::REQUEST_EXIT_APP);
 		} else {
 			g_QuitRequested = 1;
